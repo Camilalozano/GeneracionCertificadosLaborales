@@ -1,0 +1,334 @@
+# ============================================================
+# GENERADOR AUTOMÁTICO DE CERTIFICADOS LABORALES ATENEA
+# Input: Excel con hoja "SECOP_NoEstructurado"
+# Output: ZIP con certificados .docx y, si es posible, .pdf
+# ============================================================
+
+import os
+import re
+import zipfile
+import shutil
+import subprocess
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.section import WD_SECTION
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+
+
+# =========================
+# FUNCIONES AUXILIARES
+# =========================
+
+def limpiar_nombre_archivo(texto):
+    texto = str(texto).strip()
+    texto = re.sub(r'[\\/*?:"<>|]', "_", texto)
+    texto = re.sub(r"\s+", "_", texto)
+    return texto[:180]
+
+
+def valor_limpio(valor):
+    if pd.isna(valor):
+        return ""
+    return str(valor).strip()
+
+
+def formatear_fecha(valor):
+    if pd.isna(valor) or str(valor).strip() == "":
+        return ""
+
+    texto = str(valor)
+
+    # Limpia textos tipo SECOP con zona horaria
+    texto = texto.split("((")[0].strip()
+
+    try:
+        fecha = pd.to_datetime(texto, dayfirst=True, errors="coerce")
+        if pd.isna(fecha):
+            return texto
+        return fecha.strftime("%d/%m/%Y")
+    except Exception:
+        return texto
+
+
+def definir_calidad(tipo_contrato):
+    tipo = valor_limpio(tipo_contrato).upper()
+
+    if "PRESTACION DE SERVICIOS PROFESIONALES" in tipo or "PRESTACIÓN DE SERVICIOS PROFESIONALES" in tipo:
+        return "en calidad de contratista"
+    elif "PRESTACIÓN DE SERVICIOS" in tipo or "PRESTACION DE SERVICIOS" in tipo:
+        return "en calidad de contratista"
+    else:
+        return "en calidad de contratista"
+
+
+def agregar_parrafo(doc, texto="", bold=False, align=None, size=11):
+    p = doc.add_paragraph()
+    if align:
+        p.alignment = align
+
+    run = p.add_run(texto)
+    run.bold = bold
+    run.font.name = "Arial"
+    run.font.size = Pt(size)
+    return p
+
+
+def agregar_titulo_centrado(doc, texto):
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = p.add_run(texto)
+    run.bold = True
+    run.font.name = "Arial"
+    run.font.size = Pt(11)
+    return p
+
+
+def agregar_campo(doc, etiqueta, valor):
+    p = doc.add_paragraph()
+    p.paragraph_format.space_after = Pt(3)
+
+    r1 = p.add_run(f"{etiqueta}: ")
+    r1.bold = True
+    r1.font.name = "Arial"
+    r1.font.size = Pt(11)
+
+    r2 = p.add_run(valor)
+    r2.font.name = "Arial"
+    r2.font.size = Pt(11)
+
+
+def normalizar_obligaciones(texto):
+    texto = valor_limpio(texto)
+
+    if not texto:
+        return []
+
+    # Divide por numeración tipo 1. 2. 3.
+    partes = re.split(r"\n?\s*(?=\d+\.\s)", texto)
+    partes = [p.strip() for p in partes if p.strip()]
+
+    if len(partes) <= 1:
+        # Si no viene numerado, divide por saltos de línea
+        partes = [p.strip() for p in texto.split("\n") if p.strip()]
+
+    return partes
+
+
+def configurar_margenes(doc):
+    section = doc.sections[0]
+    section.top_margin = Inches(0.7)
+    section.bottom_margin = Inches(0.7)
+    section.left_margin = Inches(0.8)
+    section.right_margin = Inches(0.8)
+
+
+def agregar_footer(doc):
+    section = doc.sections[0]
+    footer = section.footer
+    p = footer.paragraphs[0]
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+    run = p.add_run(
+        "Cr 10 # 28-49. Torre A, piso 26.\n"
+        "Bogotá D.C. Colombia\n"
+        "(601) 666 0006\n"
+        "www.agenciaatenea.gov.co"
+    )
+    run.font.name = "Arial"
+    run.font.size = Pt(8)
+
+
+def convertir_docx_a_pdf(docx_path, output_dir):
+    """
+    Intenta convertir DOCX a PDF usando LibreOffice.
+    Si no está instalado, simplemente omite la conversión.
+    """
+    libreoffice = shutil.which("libreoffice") or shutil.which("soffice")
+
+    if not libreoffice:
+        return None
+
+    try:
+        subprocess.run(
+            [
+                libreoffice,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(output_dir),
+                str(docx_path)
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+
+        pdf_path = output_dir / f"{docx_path.stem}.pdf"
+        return pdf_path if pdf_path.exists() else None
+
+    except Exception:
+        return None
+
+
+# =========================
+# FUNCIÓN PRINCIPAL
+# =========================
+
+def crear_certificado(row, output_dir, logo_path=None):
+    numero_contrato = valor_limpio(row.get("numero_proceso", ""))
+    nombre = valor_limpio(row.get("nombre_contratista", ""))
+    documento = valor_limpio(row.get("numero_documento_contratista", ""))
+    objeto = valor_limpio(row.get("Objeto", ""))
+    obligaciones = valor_limpio(row.get("obligaciones específicas consolidadas", ""))
+    valor_total = valor_limpio(row.get("precio_estimado_total", ""))
+    fecha_inicio = formatear_fecha(row.get("fecha_publicacion_proceso", ""))
+    fecha_fin = formatear_fecha(row.get("fecha_terminacion_contrato", ""))
+    tiempo_ejecucion = valor_limpio(row.get("duracion_contrato", ""))
+    tipo_contrato = valor_limpio(row.get("Tipo_contrato", ""))
+    calidad = definir_calidad(tipo_contrato)
+
+    doc = Document()
+    configurar_margenes(doc)
+
+    # Logo superior izquierdo
+    if logo_path and Path(logo_path).exists():
+        p_logo = doc.add_paragraph()
+        p_logo.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        run_logo = p_logo.add_run()
+        run_logo.add_picture(str(logo_path), width=Inches(1.45))
+
+    agregar_titulo_centrado(
+        doc,
+        "LA SUBGERENCIA DE GESTIÓN ADMINISTRATIVA DE LA AGENCIA DISTRITAL PARA LA\n"
+        "EDUCACIÓN SUPERIOR, LA CIENCIA Y LA TECNOLOGÍA - ATENEA"
+    )
+
+    agregar_titulo_centrado(doc, "CERTIFICA QUE:")
+
+    texto_intro = (
+        f"Revisados los archivos de contratación, se encontró que {nombre}, "
+        f"quien se identifica con número de identificación {documento}, "
+        f"suscribió con la Agencia Distrital para la Educación Superior, "
+        f"la Ciencia y la Tecnología, {calidad}, el siguiente contrato:"
+    )
+
+    p = agregar_parrafo(doc, texto_intro, size=11)
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+
+    agregar_titulo_centrado(doc, f"CONTRATO No. {numero_contrato}")
+
+    agregar_campo(doc, "Objeto", objeto)
+    agregar_campo(doc, "Valor total", valor_total)
+    agregar_campo(doc, "Fecha de inicio", fecha_inicio)
+    agregar_campo(doc, "Fecha de finalización", fecha_fin)
+    agregar_campo(doc, "Tiempo de ejecución", tiempo_ejecucion)
+    agregar_campo(doc, "Estado", "")
+
+    agregar_parrafo(doc, "Obligaciones específicas del contratista:", bold=True)
+
+    lista_obligaciones = normalizar_obligaciones(obligaciones)
+
+    for i, obligacion in enumerate(lista_obligaciones, start=1):
+        obligacion = re.sub(r"^\d+\.\s*", "", obligacion).strip()
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(2)
+
+        r = p.add_run(f"{i}. {obligacion}")
+        r.font.name = "Arial"
+        r.font.size = Pt(10.5)
+
+    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+    agregar_parrafo(doc, f"La solicitud se expide en Bogotá, el día {fecha_hoy}.")
+    agregar_parrafo(doc, "Cordialmente,")
+
+    doc.add_paragraph("\n")
+
+    agregar_parrafo(doc, "CAMILO CARDOZO CRUZ", bold=True)
+    agregar_parrafo(doc, "Subgerente de Gestión Administrativa")
+
+    agregar_parrafo(doc, "Proyectó. Revisó.", size=8)
+
+    agregar_footer(doc)
+
+    nombre_archivo = limpiar_nombre_archivo(f"{numero_contrato}_{documento}")
+    docx_path = output_dir / f"{nombre_archivo}.docx"
+    doc.save(docx_path)
+
+    return docx_path
+
+
+def main():
+    print("=== GENERADOR DE CERTIFICADOS LABORALES ATENEA ===")
+
+    ruta_excel = input("Ingresa la ruta completa del archivo Excel .xlsx: ").strip().strip('"')
+    ruta_salida = input("Ingresa la ruta de la carpeta donde deseas guardar el ZIP: ").strip().strip('"')
+    ruta_logo = input("Ingresa la ruta del logo de Atenea en PNG/JPG. Si no tienes logo, deja vacío y presiona Enter: ").strip().strip('"')
+
+    ruta_excel = Path(ruta_excel)
+    ruta_salida = Path(ruta_salida)
+    ruta_salida.mkdir(parents=True, exist_ok=True)
+
+    if not ruta_excel.exists():
+        raise FileNotFoundError(f"No se encontró el archivo Excel: {ruta_excel}")
+
+    print("\nLeyendo base de datos...")
+
+    df = pd.read_excel(ruta_excel, sheet_name="SECOP_NoEstructurado")
+
+    columna_obligaciones = "obligaciones específicas consolidadas"
+
+    if columna_obligaciones not in df.columns:
+        raise ValueError(f"No existe la columna requerida: {columna_obligaciones}")
+
+    df_filtrado = df[
+        df[columna_obligaciones].notna()
+        & (df[columna_obligaciones].astype(str).str.strip() != "")
+    ].copy()
+
+    print(f"Registros con obligaciones no faltantes: {len(df_filtrado)}")
+
+    carpeta_certificados = ruta_salida / "certificados_laborales_atenea"
+    carpeta_certificados.mkdir(parents=True, exist_ok=True)
+
+    certificados_generados = []
+
+    for idx, row in df_filtrado.iterrows():
+        try:
+            docx_path = crear_certificado(
+                row=row,
+                output_dir=carpeta_certificados,
+                logo_path=ruta_logo if ruta_logo else None
+            )
+
+            certificados_generados.append(docx_path)
+
+            pdf_path = convertir_docx_a_pdf(docx_path, carpeta_certificados)
+            if pdf_path:
+                certificados_generados.append(pdf_path)
+
+            print(f"Certificado generado: {docx_path.name}")
+
+        except Exception as e:
+            print(f"Error en registro {idx}: {e}")
+
+    zip_path = ruta_salida / "certificados_laborales_atenea.zip"
+
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for archivo in certificados_generados:
+            zipf.write(archivo, arcname=archivo.name)
+
+    print("\n===================================")
+    print("Proceso finalizado correctamente.")
+    print(f"ZIP generado en: {zip_path}")
+    print("===================================")
+
+
+if __name__ == "__main__":
+    main()
