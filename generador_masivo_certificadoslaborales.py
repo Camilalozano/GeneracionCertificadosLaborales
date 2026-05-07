@@ -38,6 +38,28 @@ def valor_limpio(valor):
     return str(valor).strip()
 
 
+def valor_documento_texto(valor):
+    """
+    Normaliza números de documento leídos desde Excel para usarlos como texto.
+
+    Cuando pandas interpreta la columna como numérica, documentos como
+    1032373832 pueden llegar como 1032373832.0. Para evitar que ese sufijo
+    aparezca en el certificado o en el nombre del archivo, los flotantes que
+    representan enteros se convierten explícitamente a texto entero.
+    """
+    if pd.isna(valor):
+        return ""
+
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+
+    texto = str(valor).strip()
+    if re.fullmatch(r"\d+\.0+", texto):
+        return texto.split(".", 1)[0]
+
+    return texto
+
+
 def formatear_fecha(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return ""
@@ -246,7 +268,7 @@ def convertir_docx_a_pdf(docx_path, output_dir):
 def crear_certificado(row, output_dir, logo_path=None):
     numero_contrato = valor_limpio(row.get("numero_proceso", ""))
     entidad_adjudicataria = valor_limpio(row.get("entidad_adjudicataria", ""))
-    documento = valor_limpio(row.get("numero_documento_contratista", ""))
+    documento = valor_documento_texto(row.get("numero_documento_contratista", ""))
     objeto = valor_limpio(row.get("Objeto", ""))
     obligaciones = valor_limpio(row.get("obligaciones específicas consolidadas", ""))
     valor_total = valor_limpio(row.get("precio_estimado_total", ""))
@@ -345,7 +367,11 @@ def main():
 
     print("\nLeyendo base de datos...")
 
-    df = pd.read_excel(ruta_excel, sheet_name="SECOP_NoEstructurado")
+    df = pd.read_excel(
+        ruta_excel,
+        sheet_name="SECOP_NoEstructurado",
+        dtype={"numero_documento_contratista": "string"},
+    )
 
     columna_obligaciones = "obligaciones específicas consolidadas"
     columna_url = "url"
