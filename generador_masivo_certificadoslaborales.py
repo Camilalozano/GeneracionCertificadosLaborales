@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_SECTION
 from docx.oxml import OxmlElement
@@ -101,6 +101,68 @@ def agregar_campo(doc, etiqueta, valor):
     r2 = p.add_run(valor)
     r2.font.name = "Arial"
     r2.font.size = Pt(11)
+
+
+def agregar_hipervinculo(parrafo, texto, url, color="FF0000", bold=True):
+    relacion_id = parrafo.part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True
+    )
+
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), relacion_id)
+
+    new_run = OxmlElement("w:r")
+    run_properties = OxmlElement("w:rPr")
+
+    if bold:
+        run_properties.append(OxmlElement("w:b"))
+
+    run_color = OxmlElement("w:color")
+    run_color.set(qn("w:val"), color)
+    run_properties.append(run_color)
+
+    run_font = OxmlElement("w:rFonts")
+    run_font.set(qn("w:ascii"), "Arial")
+    run_font.set(qn("w:hAnsi"), "Arial")
+    run_properties.append(run_font)
+
+    run_size = OxmlElement("w:sz")
+    run_size.set(qn("w:val"), "22")
+    run_properties.append(run_size)
+
+    new_run.append(run_properties)
+
+    run_text = OxmlElement("w:t")
+    run_text.text = texto
+    new_run.append(run_text)
+
+    hyperlink.append(new_run)
+    parrafo._p.append(hyperlink)
+
+
+def agregar_aviso_automatizado(doc, url):
+    texto_aviso = (
+        "Esta información ha sido generada mediante el uso de modelos de machine learning "
+        "y procesos automatizados de extracción de datos. Se recomienda validar y verificar "
+        "su contenido con las fuentes oficiales disponibles en el siguiente enlace antes de su uso."
+    )
+
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.space_before = Pt(8)
+
+    run_aviso = p.add_run(texto_aviso)
+    run_aviso.bold = True
+    run_aviso.font.name = "Arial"
+    run_aviso.font.size = Pt(11)
+    run_aviso.font.color.rgb = RGBColor(255, 0, 0)
+
+    url = valor_limpio(url)
+    if url:
+        p.add_run(" ")
+        agregar_hipervinculo(p, url, url)
 
 
 def normalizar_obligaciones(texto):
@@ -192,6 +254,7 @@ def crear_certificado(row, output_dir, logo_path=None):
     fecha_fin = formatear_fecha(row.get("fecha_terminacion_contrato", ""))
     tiempo_ejecucion = valor_limpio(row.get("duracion_contrato", ""))
     tipo_contrato = valor_limpio(row.get("Tipo_contrato", ""))
+    url = valor_limpio(row.get("url", ""))
     calidad = definir_calidad(tipo_contrato)
 
     doc = Document()
@@ -255,6 +318,8 @@ def crear_certificado(row, output_dir, logo_path=None):
 
     agregar_parrafo(doc, "Proyectó. Revisó.", size=8)
 
+    agregar_aviso_automatizado(doc, url)
+
     agregar_footer(doc)
 
     nombre_archivo = limpiar_nombre_archivo(f"{numero_contrato}_{documento}")
@@ -283,9 +348,11 @@ def main():
     df = pd.read_excel(ruta_excel, sheet_name="SECOP_NoEstructurado")
 
     columna_obligaciones = "obligaciones específicas consolidadas"
+    columna_url = "url"
 
-    if columna_obligaciones not in df.columns:
-        raise ValueError(f"No existe la columna requerida: {columna_obligaciones}")
+    for columna_requerida in (columna_obligaciones, columna_url):
+        if columna_requerida not in df.columns:
+            raise ValueError(f"No existe la columna requerida: {columna_requerida}")
 
     df_filtrado = df[
         df[columna_obligaciones].notna()
