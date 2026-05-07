@@ -245,7 +245,7 @@ def convertir_docx_a_pdf(docx_path, output_dir):
 
 def crear_certificado(row, output_dir, logo_path=None):
     numero_contrato = valor_limpio(row.get("numero_proceso", ""))
-    nombre = valor_limpio(row.get("nombre_contratista", ""))
+    nombre = valor_limpio(row.get("entidad_adjudicataria", ""))
     documento = valor_limpio(row.get("numero_documento_contratista", ""))
     objeto = valor_limpio(row.get("Objeto", ""))
     obligaciones = valor_limpio(row.get("obligaciones específicas consolidadas", ""))
