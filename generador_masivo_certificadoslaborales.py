@@ -245,7 +245,7 @@ def convertir_docx_a_pdf(docx_path, output_dir):
 
 def crear_certificado(row, output_dir, logo_path=None):
     numero_contrato = valor_limpio(row.get("numero_proceso", ""))
-    nombre = valor_limpio(row.get("entidad_adjudicataria", ""))
+    entidad_adjudicataria = valor_limpio(row.get("entidad_adjudicataria", ""))
     documento = valor_limpio(row.get("numero_documento_contratista", ""))
     objeto = valor_limpio(row.get("Objeto", ""))
     obligaciones = valor_limpio(row.get("obligaciones específicas consolidadas", ""))
@@ -276,7 +276,7 @@ def crear_certificado(row, output_dir, logo_path=None):
     agregar_titulo_centrado(doc, "CERTIFICA QUE:")
 
     texto_intro = (
-        f"Revisados los archivos de contratación, se encontró que {nombre}, "
+        f"Revisados los archivos de contratación, se encontró que {entidad_adjudicataria}, "
         f"quien se identifica con número de identificación {documento}, "
         f"suscribió con la Agencia Distrital para la Educación Superior, "
         f"la Ciencia y la Tecnología, {calidad}, el siguiente contrato:"
@@ -349,8 +349,9 @@ def main():
 
     columna_obligaciones = "obligaciones específicas consolidadas"
     columna_url = "url"
+    columna_entidad_adjudicataria = "entidad_adjudicataria"
 
-    for columna_requerida in (columna_obligaciones, columna_url):
+    for columna_requerida in (columna_obligaciones, columna_url, columna_entidad_adjudicataria):
         if columna_requerida not in df.columns:
             raise ValueError(f"No existe la columna requerida: {columna_requerida}")
 
