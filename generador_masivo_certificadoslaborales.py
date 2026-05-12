@@ -60,6 +60,67 @@ def valor_documento_texto(valor):
     return texto
 
 
+def formatear_documento_colombiano(valor):
+    """
+    Formatea documentos para que se vean como en la plantilla:
+    1032373832 -> 1.032.373.832.
+    Si el valor contiene letras o caracteres especiales, conserva el texto limpio.
+    """
+    texto = valor_documento_texto(valor)
+    if not texto:
+        return ""
+
+    solo_digitos = re.sub(r"\D", "", texto)
+    if solo_digitos and len(solo_digitos) == len(re.sub(r"\s", "", texto)):
+        return f"{int(solo_digitos):,}".replace(",", ".")
+
+    return texto
+
+
+def formatear_valor_pesos(valor):
+    """
+    Formatea valores monetarios provenientes de SECOP para el certificado.
+    Ejemplo: 90000000 -> $90.000.000 M/CTE.
+    """
+    if pd.isna(valor) or str(valor).strip() == "":
+        return ""
+
+    texto = str(valor).strip()
+
+    # Si ya viene con símbolo o texto, limpia espacios y conserva el contenido.
+    if "$" in texto or "M/CTE" in texto.upper() or "PESOS" in texto.upper():
+        return re.sub(r"\s+", " ", texto)
+
+    try:
+        numero = pd.to_numeric(texto.replace(".", "").replace(",", "."), errors="coerce")
+        if pd.isna(numero):
+            return texto
+        numero_entero = int(round(float(numero)))
+        return f"${numero_entero:,}".replace(",", ".") + " M/CTE"
+    except Exception:
+        return texto
+
+
+def formatear_fecha_larga(valor):
+    """
+    Formatea fechas en estilo de certificado: 17 de marzo del 2025.
+    """
+    if pd.isna(valor) or str(valor).strip() == "":
+        return ""
+
+    texto = str(valor).split("((")[0].strip()
+    fecha = pd.to_datetime(texto, dayfirst=True, errors="coerce")
+    if pd.isna(fecha):
+        return texto
+
+    meses = {
+        1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
+        5: "mayo", 6: "junio", 7: "julio", 8: "agosto",
+        9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre"
+    }
+    return f"{fecha.day} de {meses[fecha.month]} del {fecha.year}"
+
+
 def formatear_fecha(valor):
     if pd.isna(valor) or str(valor).strip() == "":
         return ""
@@ -266,18 +327,19 @@ def convertir_docx_a_pdf(docx_path, output_dir):
 # =========================
 
 def crear_certificado(row, output_dir, logo_path=None):
-    numero_contrato = valor_limpio(row.get("numero_proceso", ""))
-    entidad_adjudicataria = valor_limpio(row.get("entidad_adjudicataria", ""))
-    documento = valor_documento_texto(row.get("numero_documento_contratista", ""))
-    objeto = valor_limpio(row.get("Objeto", ""))
+    # Variables tomadas de la base SECOP_NoEstructurado / contratos electrónicos
+    numero_contrato = valor_limpio(row.get("referencia_del_contrato (contratos_electronicos)", ""))
+    entidad_adjudicataria = valor_limpio(row.get("proveedor_adjudicado (contratos_electronicos)", "")).upper()
+    documento = formatear_documento_colombiano(row.get("documento_proveedor (contratos_electronicos)", ""))
+    objeto = valor_limpio(row.get("descripcion_del_proceso (contratos_electronicos)", ""))
     obligaciones = valor_limpio(row.get("obligaciones específicas consolidadas", ""))
-    valor_total = valor_limpio(row.get("precio_estimado_total", ""))
-    fecha_inicio = formatear_fecha(row.get("fecha_publicacion_proceso", ""))
-    fecha_fin = formatear_fecha(row.get("fecha_terminacion_contrato", ""))
+    valor_total = formatear_valor_pesos(row.get("valor_del_contrato (contratos_electronicos)", ""))
+    fecha_inicio = formatear_fecha_larga(row.get("fecha_de_inicio_del_contrato (contratos_electronicos)", ""))
+    fecha_fin = formatear_fecha_larga(row.get("fecha_de_fin_del_contrato (contratos_electronicos)", ""))
     tiempo_ejecucion = valor_limpio(row.get("duracion_contrato", ""))
-    tipo_contrato = valor_limpio(row.get("Tipo_contrato", ""))
-    url = valor_limpio(row.get("url", ""))
-    calidad = definir_calidad(tipo_contrato)
+    tipo_contrato = valor_limpio(row.get("justificacion_modalidad_de (contratos_electronicos)", ""))
+    url = valor_limpio(row.get("urlproceso (contratos_electronicos)", ""))
+    calidad = definir_calidad(row.get("justificacion_modalidad_de (contratos_electronicos)", ""))
 
     doc = Document()
     configurar_margenes(doc)
@@ -299,7 +361,7 @@ def crear_certificado(row, output_dir, logo_path=None):
 
     texto_intro = (
         f"Revisados los archivos de contratación, se encontró que {entidad_adjudicataria}, "
-        f"quien se identifica con número de identificación {documento}, "
+        f"quien se identifica con cédula de ciudadanía {documento}, "
         f"suscribió con la Agencia Distrital para la Educación Superior, "
         f"la Ciencia y la Tecnología, {calidad}, el siguiente contrato:"
     )
@@ -367,17 +429,37 @@ def main():
 
     print("\nLeyendo base de datos...")
 
-    df = pd.read_excel(
-        ruta_excel,
-        sheet_name="SECOP_NoEstructurado",
-        dtype={"numero_documento_contratista": "string"},
-    )
+    # Lee la hoja SECOP_NoEstructurado. Si el archivo viene con otro nombre de hoja
+    # como "Sheet1", toma automáticamente la primera hoja disponible.
+    try:
+        df = pd.read_excel(
+            ruta_excel,
+            sheet_name="SECOP_NoEstructurado",
+            dtype={"documento_proveedor (contratos_electronicos)": "string"},
+        )
+    except ValueError:
+        df = pd.read_excel(
+            ruta_excel,
+            sheet_name=0,
+            dtype={"documento_proveedor (contratos_electronicos)": "string"},
+        )
 
     columna_obligaciones = "obligaciones específicas consolidadas"
-    columna_url = "url"
-    columna_entidad_adjudicataria = "entidad_adjudicataria"
 
-    for columna_requerida in (columna_obligaciones, columna_url, columna_entidad_adjudicataria):
+    columnas_requeridas = [
+        "referencia_del_contrato (contratos_electronicos)",
+        "proveedor_adjudicado (contratos_electronicos)",
+        "documento_proveedor (contratos_electronicos)",
+        "descripcion_del_proceso (contratos_electronicos)",
+        columna_obligaciones,
+        "valor_del_contrato (contratos_electronicos)",
+        "fecha_de_inicio_del_contrato (contratos_electronicos)",
+        "fecha_de_fin_del_contrato (contratos_electronicos)",
+        "justificacion_modalidad_de (contratos_electronicos)",
+        "urlproceso (contratos_electronicos)",
+    ]
+
+    for columna_requerida in columnas_requeridas:
         if columna_requerida not in df.columns:
             raise ValueError(f"No existe la columna requerida: {columna_requerida}")
 
