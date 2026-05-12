@@ -1,6 +1,6 @@
 # ============================================================
 # GENERADOR AUTOMÁTICO DE CERTIFICADOS LABORALES ATENEA
-# Input: Excel con hoja "SECOP_NoEstructurado"
+# Input: Excel .xlsx con cualquier nombre y cualquier nombre de hoja. Se toma siempre la primera pestaña.
 # Output: ZIP con certificados .docx y, si es posible, .pdf
 # ============================================================
 
@@ -59,6 +59,22 @@ def valor_documento_texto(valor):
 
     return texto
 
+
+
+
+def limpiar_documento_para_archivo(valor):
+    """
+    Limpia el documento para usarlo en el nombre del archivo.
+    Ejemplo: 1.032.373.832 -> 1032373832.
+    También corrige valores numéricos leídos desde Excel como 1032373832.0.
+    """
+    texto = valor_documento_texto(valor)
+    if not texto:
+        return ""
+
+    # Si el documento tiene puntos, comas, espacios o guiones, conserva solo dígitos.
+    solo_digitos = re.sub(r"\D", "", texto)
+    return solo_digitos if solo_digitos else limpiar_nombre_archivo(texto)
 
 def formatear_documento_colombiano(valor):
     """
@@ -338,6 +354,7 @@ def crear_certificado(row, output_dir, logo_path=None):
     fecha_fin = formatear_fecha_larga(row.get("fecha_de_fin_del_contrato (contratos_electronicos)", ""))
     tiempo_ejecucion = valor_limpio(row.get("duracion_contrato", ""))
     tipo_contrato = valor_limpio(row.get("justificacion_modalidad_de (contratos_electronicos)", ""))
+    estado = valor_limpio(row.get("estado_contrato (contratos_electronicos)", ""))
     url = valor_limpio(row.get("urlproceso (contratos_electronicos)", ""))
     calidad = definir_calidad(row.get("justificacion_modalidad_de (contratos_electronicos)", ""))
 
@@ -376,7 +393,7 @@ def crear_certificado(row, output_dir, logo_path=None):
     agregar_campo(doc, "Fecha de inicio", fecha_inicio)
     agregar_campo(doc, "Fecha de finalización", fecha_fin)
     agregar_campo(doc, "Tiempo de ejecución", tiempo_ejecucion)
-    agregar_campo(doc, "Estado", "")
+    agregar_campo(doc, "Estado", estado)
 
     agregar_parrafo(doc, "Obligaciones específicas del contratista:", bold=True)
 
@@ -406,7 +423,8 @@ def crear_certificado(row, output_dir, logo_path=None):
 
     agregar_footer(doc)
 
-    nombre_archivo = limpiar_nombre_archivo(f"{numero_contrato}_{documento}")
+    documento_archivo = limpiar_documento_para_archivo(row.get("numero_documento_contratista", ""))
+    nombre_archivo = limpiar_nombre_archivo(f"{numero_contrato}_{documento_archivo}")
     docx_path = output_dir / f"{nombre_archivo}.docx"
     doc.save(docx_path)
 
@@ -416,7 +434,7 @@ def crear_certificado(row, output_dir, logo_path=None):
 def main():
     print("=== GENERADOR DE CERTIFICADOS LABORALES ATENEA ===")
 
-    ruta_excel = input("Ingresa la ruta completa del archivo Excel .xlsx: ").strip().strip('"')
+    ruta_excel = input("Ingresa la ruta completa del archivo Excel .xlsx de entrada: ").strip().strip('"')
     ruta_salida = input("Ingresa la ruta de la carpeta donde deseas guardar el ZIP: ").strip().strip('"')
     ruta_logo = input("Ingresa la ruta del logo de Atenea en PNG/JPG. Si no tienes logo, deja vacío y presiona Enter: ").strip().strip('"')
 
@@ -429,20 +447,16 @@ def main():
 
     print("\nLeyendo base de datos...")
 
-    # Lee la hoja SECOP_NoEstructurado. Si el archivo viene con otro nombre de hoja
-    # como "Sheet1", toma automáticamente la primera hoja disponible.
-    try:
-        df = pd.read_excel(
-            ruta_excel,
-            sheet_name="SECOP_NoEstructurado",
-            dtype={"documento_proveedor (contratos_electronicos)": "string"},
-        )
-    except ValueError:
-        df = pd.read_excel(
-            ruta_excel,
-            sheet_name=0,
-            dtype={"documento_proveedor (contratos_electronicos)": "string"},
-        )
+    # El archivo de entrada puede tener cualquier nombre y la hoja puede tener
+    # cualquier nombre. Por instrucción, se toma siempre la primera pestaña.
+    df = pd.read_excel(
+        ruta_excel,
+        sheet_name=0,
+        dtype={
+            "documento_proveedor (contratos_electronicos)": "string",
+            "numero_documento_contratista": "string",
+        },
+    )
 
     columna_obligaciones = "obligaciones específicas consolidadas"
 
@@ -456,7 +470,9 @@ def main():
         "fecha_de_inicio_del_contrato (contratos_electronicos)",
         "fecha_de_fin_del_contrato (contratos_electronicos)",
         "justificacion_modalidad_de (contratos_electronicos)",
+        "estado_contrato (contratos_electronicos)",
         "urlproceso (contratos_electronicos)",
+        "numero_documento_contratista",
     ]
 
     for columna_requerida in columnas_requeridas:
